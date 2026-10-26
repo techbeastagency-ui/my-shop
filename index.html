@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My Household Shop</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: Arial, sans-serif; background: #f6f6f4; color: #222; }
+  header { background: #1f6f5c; color: #fff; padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 5; }
+  header h1 { margin: 0; font-size: 22px; }
+  #cartBtn { background: #fff; color: #1f6f5c; border: 0; padding: 10px 16px; border-radius: 20px; font-weight: bold; cursor: pointer; }
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; padding: 20px; max-width: 1100px; margin: auto; }
+  .card { background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.1); display: flex; flex-direction: column; }
+  .card img { width: 100%; height: 180px; object-fit: cover; background: #eee; }
+  .card .info { padding: 12px; flex: 1; display: flex; flex-direction: column; }
+  .card h3 { margin: 0 0 6px; font-size: 17px; }
+  .card p { margin: 0 0 10px; font-size: 14px; color: #555; flex: 1; }
+  .price { font-weight: bold; font-size: 18px; margin-bottom: 8px; }
+  button.add { background: #1f6f5c; color: #fff; border: 0; padding: 10px; border-radius: 6px; cursor: pointer; font-size: 15px; }
+  button.add:disabled { background: #aaa; cursor: not-allowed; }
+  #panel { position: fixed; top: 0; right: -420px; width: 400px; max-width: 100%; height: 100%; background: #fff; box-shadow: -2px 0 10px rgba(0,0,0,.2); padding: 20px; overflow-y: auto; transition: right .3s; z-index: 10; }
+  #panel.open { right: 0; }
+  #panel h2 { margin-top: 0; }
+  .row { display: flex; justify-content: space-between; align-items: center; margin: 8px 0; gap: 8px; }
+  .row button { padding: 2px 8px; }
+  input, textarea { width: 100%; padding: 10px; margin: 6px 0; border: 1px solid #ccc; border-radius: 6px; font-size: 15px; }
+  #placeBtn { width: 100%; background: #1f6f5c; color: #fff; border: 0; padding: 12px; border-radius: 6px; font-size: 16px; cursor: pointer; margin-top: 8px; }
+  #close { float: right; background: none; border: 0; font-size: 24px; cursor: pointer; }
+  #msg { padding: 14px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>My Household Shop</h1>
+  <button id="cartBtn">Cart (<span id="count">0</span>)</button>
+</header>
+
+<div id="msg"></div>
+<div id="grid"></div>
+
+<div id="panel">
+  <button id="close">&times;</button>
+  <h2>Your Cart</h2>
+  <div id="cartItems"></div>
+  <h3>Total: <span id="total">0.00</span></h3>
+  <h3>Your details</h3>
+  <input id="name" placeholder="Full name">
+  <input id="phone" placeholder="Phone number">
+  <input id="email" placeholder="Email (optional)">
+  <textarea id="address" rows="3" placeholder="Delivery address"></textarea>
+  <textarea id="note" rows="2" placeholder="Note to seller (optional)"></textarea>
+  <p style="font-size:13px;color:#666">Payment: pay on delivery or by bank transfer. The seller will contact you to confirm.</p>
+  <button id="placeBtn">Place Order</button>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, collection, getDocs, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+// PASTE YOUR FIREBASE CONFIG HERE
+const firebaseConfig = {
+  apiKey: "AIzaSyBmXYBEw4ESMfTPw1WOQ2wzvyEJ5XyqZjo",
+  authDomain: "my-shop-75946.firebaseapp.com",
+  projectId: "my-shop-75946",
+  storageBucket: "my-shop-75946.firebasestorage.app",
+  messagingSenderId: "542902981197",
+  appId: "1:542902981197:web:b5f8d030681c8e294f8204"
+};
+
+const CURRENCY = "$"; // change to your currency symbol
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+let products = [];
+let cart = {};
+
+const $ = id => document.getElementById(id);
+const money = n => CURRENCY + Number(n).toFixed(2);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+async function loadProducts() {
+  try {
+    const snap = await getDocs(collection(db, "products"));
+    products = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => p.visible !== false);
+    render();
+  } catch (e) {
+    $("msg").textContent = "Could not load products. Check your Firebase setup.";
+    console.error(e);
+  }
+}
+
+function render() {
+  const grid = $("grid");
+  if (!products.length) { $("msg").textContent = "No products yet. Please check back soon."; grid.innerHTML = ""; return; }
+  $("msg").textContent = "";
+  grid.innerHTML = products.map(p => `
+    <div class="card">
+      <img src="${esc(p.image)}" alt="${esc(p.name)}" onerror="this.style.visibility='hidden'">
+      <div class="info">
+        <h3>${esc(p.name)}</h3>
+        <p>${esc(p.description)}</p>
+        <div class="price">${money(p.price)}</div>
+        <button class="add" data-id="${p.id}" ${Number(p.stock) <= 0 ? "disabled" : ""}>${Number(p.stock) <= 0 ? "Out of stock" : "Add to cart"}</button>
+      </div>
+    </div>`).join("");
+  grid.querySelectorAll("button.add").forEach(b => b.onclick = () => addToCart(b.dataset.id));
+}
+
+function addToCart(id) {
+  const p = products.find(x => x.id === id);
+  const have = cart[id] || 0;
+  if (have >= Number(p.stock)) { alert("Sorry, no more stock available."); return; }
+  cart[id] = have + 1;
+  renderCart();
+}
+
+function changeQty(id, d) {
+  const p = products.find(x => x.id === id);
+  const q = (cart[id] || 0) + d;
+  if (q <= 0) delete cart[id];
+  else if (q <= Number(p.stock)) cart[id] = q;
+  renderCart();
+}
+window.changeQty = changeQty;
+
+function renderCart() {
+  let total = 0, count = 0;
+  const html = Object.entries(cart).map(([id, q]) => {
+    const p = products.find(x => x.id === id);
+    if (!p) return "";
+    total += p.price * q; count += q;
+    return `<div class="row"><span>${esc(p.name)}</span><span><button onclick="changeQty('${id}',-1)">-</button> ${q} <button onclick="changeQty('${id}',1)">+</button></span><span>${money(p.price * q)}</span></div>`;
+  }).join("");
+  $("cartItems").innerHTML = html || "<p>Your cart is empty.</p>";
+  $("total").textContent = money(total);
+  $("count").textContent = count;
+}
+
+async function placeOrder() {
+  const name = $("name").value.trim();
+  const phone = $("phone").value.trim();
+  const address = $("address").value.trim();
+  if (!Object.keys(cart).length) return alert("Your cart is empty.");
+  if (!name || !phone || !address) return alert("Please fill in your name, phone, and address.");
+
+  const items = Object.entries(cart).map(([id, q]) => {
+    const p = products.find(x => x.id === id);
+    return { productId: id, name: p.name, price: p.price, qty: q };
+  });
+  const total = items.reduce((s, i) => s + i.price * i.qty, 0);
+
+  $("placeBtn").disabled = true;
+  try {
+    await addDoc(collection(db, "orders"), {
+      customerName: name,
+      phone,
+      email: $("email").value.trim(),
+      address,
+      note: $("note").value.trim(),
+      items,
+      total,
+      status: "New",
+      createdAt: serverTimestamp()
+    });
+    cart = {};
+    renderCart();
+    ["name","phone","email","address","note"].forEach(f => $(f).value = "");
+    $("panel").classList.remove("open");
+    alert("Thank you! Your order has been placed. The seller will contact you soon.");
+  } catch (e) {
+    alert("Sorry, the order could not be sent. Please try again.");
+    console.error(e);
+  }
+  $("placeBtn").disabled = false;
+}
+
+$("cartBtn").onclick = () => $("panel").classList.add("open");
+$("close").onclick = () => $("panel").classList.remove("open");
+$("placeBtn").onclick = placeOrder;
+
+renderCart();
+loadProducts();
+</script>
+</body>
+</html>

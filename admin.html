@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Seller Admin</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: Arial, sans-serif; background: #f6f6f4; color: #222; }
+  header { background: #333; color: #fff; padding: 14px 20px; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { margin: 0; font-size: 20px; }
+  main { max-width: 1000px; margin: auto; padding: 20px; }
+  .box { background: #fff; border-radius: 10px; padding: 18px; margin-bottom: 20px; box-shadow: 0 1px 4px rgba(0,0,0,.1); }
+  input, textarea, select { width: 100%; padding: 10px; margin: 6px 0; border: 1px solid #ccc; border-radius: 6px; font-size: 15px; font-family: inherit; }
+  button { background: #1f6f5c; color: #fff; border: 0; padding: 9px 14px; border-radius: 6px; cursor: pointer; font-size: 14px; margin: 2px; }
+  button.danger { background: #b3261e; }
+  button.grey { background: #777; }
+  .tabs button { background: #ddd; color: #222; }
+  .tabs button.active { background: #1f6f5c; color: #fff; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px; border-bottom: 1px solid #eee; font-size: 14px; vertical-align: top; }
+  td img { width: 50px; height: 50px; object-fit: cover; border-radius: 6px; }
+  .order { border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+  .order h4 { margin: 0 0 6px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; background: #eee; font-size: 12px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @media (max-width: 600px) { .grid2 { grid-template-columns: 1fr; } }
+  #login { max-width: 360px; margin: 80px auto; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+
+<div id="login" class="box">
+  <h2>Seller Login</h2>
+  <input id="email" type="email" placeholder="Email">
+  <input id="password" type="password" placeholder="Password">
+  <button id="loginBtn">Log in</button>
+  <p id="loginErr" style="color:#b3261e"></p>
+</div>
+
+<div id="app" class="hidden">
+  <header>
+    <h1>Seller Admin</h1>
+    <button id="logoutBtn" class="grey">Log out</button>
+  </header>
+  <main>
+    <div class="tabs">
+      <button id="tabOrders" class="active">Orders</button>
+      <button id="tabProducts">Products</button>
+    </div>
+
+    <div id="ordersView" style="margin-top:16px">
+      <div class="box">
+        <h3>Customer Orders</h3>
+        <div id="orders"></div>
+      </div>
+    </div>
+
+    <div id="productsView" class="hidden" style="margin-top:16px">
+      <div class="box">
+        <h3 id="formTitle">Add a product</h3>
+        <input id="pName" placeholder="Product name">
+        <textarea id="pDesc" rows="3" placeholder="Description"></textarea>
+        <div class="grid2">
+          <input id="pPrice" type="number" step="0.01" placeholder="Price">
+          <input id="pStock" type="number" placeholder="Stock quantity">
+        </div>
+        <input id="pImage" placeholder="Photo link (paste a direct image URL)">
+        <select id="pVisible">
+          <option value="true">Visible in shop</option>
+          <option value="false">Hidden from shop</option>
+        </select>
+        <button id="saveBtn">Save product</button>
+        <button id="cancelBtn" class="grey hidden">Cancel edit</button>
+      </div>
+      <div class="box">
+        <h3>Your products</h3>
+        <table>
+          <thead><tr><th></th><th>Name</th><th>Price</th><th>Stock</th><th>Shown</th><th></th></tr></thead>
+          <tbody id="productRows"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, collection, getDocs, addDoc, setDoc, updateDoc, deleteDoc, doc, query, orderBy } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
+// PASTE THE SAME FIREBASE CONFIG HERE
+const firebaseConfig = {
+  apiKey: "AIzaSyBmXYBEw4ESMfTPw1WOQ2wzvyEJ5XyqZjo",
+  authDomain: "my-shop-75946.firebaseapp.com",
+  projectId: "my-shop-75946",
+  storageBucket: "my-shop-75946.firebasestorage.app",
+  messagingSenderId: "542902981197",
+  appId: "1:542902981197:web:b5f8d030681c8e294f8204"
+};
+
+const CURRENCY = "$"; // change to your currency symbol
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const auth = getAuth(app);
+
+const $ = id => document.getElementById(id);
+const money = n => CURRENCY + Number(n).toFixed(2);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+let products = [];
+let editingId = null;
+
+// ---------- Login ----------
+$("loginBtn").onclick = async () => {
+  $("loginErr").textContent = "";
+  try {
+    await signInWithEmailAndPassword(auth, $("email").value.trim(), $("password").value);
+  } catch (e) {
+    $("loginErr").textContent = "Login failed. Check your email and password.";
+  }
+};
+$("logoutBtn").onclick = () => signOut(auth);
+
+onAuthStateChanged(auth, user => {
+  $("login").classList.toggle("hidden", !!user);
+  $("app").classList.toggle("hidden", !user);
+  if (user) { loadProducts(); loadOrders(); }
+});
+
+// ---------- Tabs ----------
+function showTab(which) {
+  $("ordersView").classList.toggle("hidden", which !== "orders");
+  $("productsView").classList.toggle("hidden", which !== "products");
+  $("tabOrders").classList.toggle("active", which === "orders");
+  $("tabProducts").classList.toggle("active", which === "products");
+}
+$("tabOrders").onclick = () => { showTab("orders"); loadOrders(); };
+$("tabProducts").onclick = () => showTab("products");
+
+// ---------- Products ----------
+async function loadProducts() {
+  const snap = await getDocs(collection(db, "products"));
+  products = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  $("productRows").innerHTML = products.map(p => `
+    <tr>
+      <td><img src="${esc(p.image)}" onerror="this.style.visibility='hidden'"></td>
+      <td>${esc(p.name)}</td>
+      <td>${money(p.price)}</td>
+      <td>${esc(p.stock)}</td>
+      <td>${p.visible === false ? "No" : "Yes"}</td>
+      <td>
+        <button data-edit="${p.id}">Edit</button>
+        <button data-del="${p.id}" class="danger">Delete</button>
+      </td>
+    </tr>`).join("") || "<tr><td colspan='6'>No products yet.</td></tr>";
+  document.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => startEdit(b.dataset.edit));
+  document.querySelectorAll("[data-del]").forEach(b => b.onclick = () => removeProduct(b.dataset.del));
+}
+
+function startEdit(id) {
+  const p = products.find(x => x.id === id);
+  editingId = id;
+  $("formTitle").textContent = "Edit product";
+  $("pName").value = p.name || "";
+  $("pDesc").value = p.description || "";
+  $("pPrice").value = p.price;
+  $("pStock").value = p.stock;
+  $("pImage").value = p.image || "";
+  $("pVisible").value = p.visible === false ? "false" : "true";
+  $("cancelBtn").classList.remove("hidden");
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function resetForm() {
+  editingId = null;
+  $("formTitle").textContent = "Add a product";
+  ["pName","pDesc","pPrice","pStock","pImage"].forEach(f => $(f).value = "");
+  $("pVisible").value = "true";
+  $("cancelBtn").classList.add("hidden");
+}
+$("cancelBtn").onclick = resetForm;
+
+$("saveBtn").onclick = async () => {
+  const data = {
+    name: $("pName").value.trim(),
+    description: $("pDesc").value.trim(),
+    price: Number($("pPrice").value),
+    stock: Number($("pStock").value),
+    image: $("pImage").value.trim(),
+    visible: $("pVisible").value === "true"
+  };
+  if (!data.name || isNaN(data.price)) return alert("Please enter at least a name and a price.");
+  try {
+    if (editingId) await setDoc(doc(db, "products", editingId), data);
+    else await addDoc(collection(db, "products"), data);
+    resetForm();
+    loadProducts();
+  } catch (e) {
+    alert("Could not save. Are you logged in with the seller email set in your Firebase rules?");
+    console.error(e);
+  }
+};
+
+async function removeProduct(id) {
+  if (!confirm("Delete this product permanently?")) return;
+  await deleteDoc(doc(db, "products", id));
+  loadProducts();
+}
+
+// ---------- Orders ----------
+async function loadOrders() {
+  const snap = await getDocs(query(collection(db, "orders"), orderBy("createdAt", "desc")));
+  const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  $("orders").innerHTML = list.map(o => {
+    const when = o.createdAt && o.createdAt.toDate ? o.createdAt.toDate().toLocaleString() : "";
+    const items = (o.items || []).map(i => `<li>${esc(i.qty)} x ${esc(i.name)} (${money(i.price)} each)</li>`).join("");
+    return `
+      <div class="order">
+        <h4>${esc(o.customerName)} <span class="badge">${esc(o.status)}</span></h4>
+        <div style="font-size:13px;color:#666">${esc(when)}</div>
+        <p><b>Phone:</b> ${esc(o.phone)}${o.email ? " | <b>Email:</b> " + esc(o.email) : ""}<br>
+           <b>Address:</b> ${esc(o.address)}</p>
+        ${o.note ? `<p><b>Note:</b> ${esc(o.note)}</p>` : ""}
+        <ul>${items}</ul>
+        <p><b>Total: ${money(o.total)}</b></p>
+        <button data-st="Packed" data-id="${o.id}">Packed</button>
+        <button data-st="Shipped" data-id="${o.id}">Shipped</button>
+        <button data-st="Delivered" data-id="${o.id}">Delivered</button>
+        <button data-delo="${o.id}" class="danger">Delete</button>
+      </div>`;
+  }).join("") || "<p>No orders yet.</p>";
+  document.querySelectorAll("[data-st]").forEach(b => b.onclick = async () => {
+    await updateDoc(doc(db, "orders", b.dataset.id), { status: b.dataset.st });
+    loadOrders();
+  });
+  document.querySelectorAll("[data-delo]").forEach(b => b.onclick = async () => {
+    if (!confirm("Delete this order?")) return;
+    await deleteDoc(doc(db, "orders", b.dataset.delo));
+    loadOrders();
+  });
+}
+</script>
+</body>
+</html>
